@@ -1,8 +1,11 @@
 import numpy as np
 import random
+import torch
+import torch.nn as nn
+
 
 class Agent():
-    def __init__(self, task):
+    def Quad_Copter_Agent(self, task, action_size=4, hidden_size=128):
         self.task = task
         self.state_size = task.state_size
         self.action_size = task.action_size
