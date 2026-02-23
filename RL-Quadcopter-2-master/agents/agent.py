@@ -13,7 +13,7 @@ class Agent(nn.Module):
         self.action_high = task.action_high
 
 
-        #nueral network with 2 hidden layers
+        #neural network with 2 hidden layers
         self.fc1 = nn.Linear(self.state_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
         #outputs the q value for each action, based on how well the action will do
