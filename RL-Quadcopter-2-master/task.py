@@ -28,7 +28,35 @@ class Task():
 
     def get_reward(self):
         """Uses current pose of sim to return reward."""
-        reward = 1.-.3*(abs(self.sim.pose[:3] - self.target_pos)).sum()
+        # Extract state information
+        position = self.sim.pose[:3]
+        orientation = self.sim.pose[3:]  # phi, theta, psi (Euler angles)
+        velocity = self.sim.v
+        angular_velocity = self.sim.angular_v
+        
+        # Component 1: Position error (squared Euclidean distance)
+        position_error = np.linalg.norm(position - self.target_pos)
+        position_reward = -1.0 * (position_error ** 2)
+        
+        # Component 2: Velocity penalty (discourage high speeds for stability)
+        velocity_penalty = -0.1 * np.linalg.norm(velocity) ** 2
+        
+        # Component 3: Orientation penalty (keep quadcopter level)
+        orientation_penalty = -0.5 * np.sum(orientation ** 2)
+        
+        # Component 4: Angular velocity penalty (minimize rotation)
+        angular_velocity_penalty = -0.05 * np.linalg.norm(angular_velocity) ** 2
+        
+        # Component 5: Success bonus (reaching target with low velocity)
+        success_bonus = 0.0
+        if position_error < 1.0 and np.linalg.norm(velocity) < 0.5:
+            success_bonus = 10.0
+        
+        # Total reward
+        reward = (position_reward + velocity_penalty + 
+                  orientation_penalty + angular_velocity_penalty + 
+                  success_bonus)
+        
         return reward
 
     def step(self, rotor_speeds):
@@ -39,6 +67,11 @@ class Task():
             done = self.sim.next_timestep(rotor_speeds) # update the sim pose and velocities
             reward += self.get_reward() 
             pose_all.append(self.sim.pose)
+        
+        # Add crash penalty if episode ended prematurely (crashed)
+        if done and self.sim.time < self.sim.runtime:
+            reward -= 10.0  # Penalty for crashing before completing episode
+        
         next_state = np.concatenate(pose_all)
         return next_state, reward, done
 
