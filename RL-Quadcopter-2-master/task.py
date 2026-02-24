@@ -23,12 +23,36 @@ class Task():
         self.action_high = 900
         self.action_size = 4
 
-        # Goal
+        # Goal: Default to hovering at altitude 10m (starting from ground level z=0)
         self.target_pos = target_pos if target_pos is not None else np.array([0., 0., 10.]) 
 
     def get_reward(self):
-        """Uses current pose of sim to return reward."""
-        reward = 1.-.3*(abs(self.sim.pose[:3] - self.target_pos)).sum()
+        """Uses current pose of sim to return reward for takeoff and hover task.
+        
+        Reward components:
+        - Penalty for distance from target position (x, y, z)
+        - Penalty for high velocity (want stable, stationary hovering)
+        - Penalty for large pitch/roll angles (want level flight)
+        """
+        # Base reward
+        reward = 1.0
+        
+        # Position penalty: penalize distance from target position
+        # Normalize by expected max distance (~20m) to keep scale reasonable
+        position_error = np.linalg.norm(self.sim.pose[:3] - self.target_pos)
+        reward -= 0.3 * position_error
+        
+        # Velocity penalty: penalize high velocity when at target
+        # Encourages the agent to decelerate and hover stably
+        velocity_norm = np.linalg.norm(self.sim.v)
+        reward -= 0.1 * velocity_norm
+        
+        # Angle penalty: penalize large pitch and roll angles
+        # Keep yaw unrestricted (it's less critical for hovering)
+        # phi is roll (index 3), theta is pitch (index 4)
+        angle_penalty = np.abs(self.sim.pose[3]) + np.abs(self.sim.pose[4])
+        reward -= 0.15 * angle_penalty
+        
         return reward
 
     def step(self, rotor_speeds):
