@@ -30,28 +30,39 @@ class Task():
         """Uses current pose of sim to return reward for takeoff and hover task.
         
         Reward components:
+        - Base reward for not crashing
         - Penalty for distance from target position (x, y, z)
         - Penalty for high velocity (want stable, stationary hovering)
         - Penalty for large pitch/roll angles (want level flight)
+        
+        The reward is carefully designed to avoid divergence while encouraging progress.
         """
-        # Base reward
+        # Base reward for not crashing/flying too far
         reward = 1.0
         
         # Position penalty: penalize distance from target position
-        # Normalize by expected max distance (~20m) to keep scale reasonable
+        # Use sqrt to compress large distances, preventing divergence
         position_error = np.linalg.norm(self.sim.pose[:3] - self.target_pos)
+        # Cap the position error to prevent extreme penalties
+        position_error = min(position_error, 50.0)  # Max 50m penalty
         reward -= 0.3 * position_error
         
         # Velocity penalty: penalize high velocity when at target
         # Encourages the agent to decelerate and hover stably
         velocity_norm = np.linalg.norm(self.sim.v)
+        velocity_norm = min(velocity_norm, 30.0)  # Cap at 30 m/s
         reward -= 0.1 * velocity_norm
         
         # Angle penalty: penalize large pitch and roll angles
         # Keep yaw unrestricted (it's less critical for hovering)
         # phi is roll (index 3), theta is pitch (index 4)
         angle_penalty = np.abs(self.sim.pose[3]) + np.abs(self.sim.pose[4])
+        angle_penalty = min(angle_penalty, 6.28)  # Cap at ±180 degrees
         reward -= 0.15 * angle_penalty
+        
+        # Ensure reward is finite and not extreme
+        reward = np.nan_to_num(reward, nan=-100.0, posinf=-100.0, neginf=-100.0)
+        reward = np.clip(reward, -100.0, 1.0)  # Bound range
         
         return reward
 
