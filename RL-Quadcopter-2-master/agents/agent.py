@@ -61,6 +61,9 @@ class Agent(nn.Module):
         self.train_interval = 4
         self.update_target_interval = 1000
         
+        self.best_score = -np.inf
+        self.noise_scale = 0.1
+        
         self.reset_episode()
     
     def _copy_weights(self):
@@ -91,6 +94,8 @@ class Agent(nn.Module):
         action = q_values.cpu().numpy()[0]
         # Clamp to valid rotor speeds
         action = np.clip(action, self.action_low, self.action_high)
+        # Ensure minimum rotor speed to avoid division by zero
+        action = np.maximum(action, 0.01)
         return action
     
     def reset_episode(self):
@@ -145,3 +150,5 @@ class Agent(nn.Module):
     def learn(self):
         """Called at end of episode"""
         self.score = self.total_reward / float(self.count) if self.count else 0.0
+        if self.score > self.best_score:
+            self.best_score = self.score
