@@ -62,7 +62,6 @@ class Agent(nn.Module):
         self.update_target_interval = 1000
         
         self.best_score = -np.inf
-        self.noise_scale = 0.1
         
         self.reset_episode()
     
@@ -92,6 +91,11 @@ class Agent(nn.Module):
         with torch.no_grad():
             q_values = self.forward(state_tensor)
         action = q_values.cpu().numpy()[0]
+        
+        # Epsilon-greedy exploration
+        if random.random() < 0.1:  # 10% separate noise/exploration chance
+             action += np.random.normal(0, 50, size=self.action_size)
+
         # Clamp to valid rotor speeds
         action = np.clip(action, self.action_low, self.action_high)
         # Ensure minimum rotor speed to avoid division by zero
