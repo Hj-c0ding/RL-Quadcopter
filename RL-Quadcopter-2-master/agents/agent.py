@@ -38,15 +38,9 @@ class Agent(nn.Module):
         self.action_size = task.action_size
         self.action_low = task.action_low
         self.action_high = task.action_high
-<<<<<<< HEAD
         self.gamma = gamma  # discount factor
         
         # Q-Network (estimates Q-values for actions)
-=======
-
-
-        #neural network with 2 hidden layers
->>>>>>> f6a37e5ad5844ab3e4a2b5c3213e53f0395558b2
         self.fc1 = nn.Linear(self.state_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
         self.fc3 = nn.Linear(hidden_size, self.action_size)
