@@ -1,10 +1,6 @@
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.optim as optim
 from collections import deque
 import random
-
 
 
 class ReplayBuffer:
@@ -19,40 +15,133 @@ class ReplayBuffer:
     def sample(self, batch_size):
         """Sample a batch of experiences"""
         experiences = random.sample(self.buffer, k=batch_size)
-        states = torch.from_numpy(np.vstack([e[0] for e in experiences])).float()
-        actions = torch.from_numpy(np.vstack([e[1] for e in experiences])).float()
-        rewards = torch.from_numpy(np.vstack([e[2] for e in experiences])).float()
-        next_states = torch.from_numpy(np.vstack([e[3] for e in experiences])).float()
-        dones = torch.from_numpy(np.vstack([e[4] for e in experiences]).astype(np.uint8)).float()
+        states = np.vstack([e[0] for e in experiences])
+        actions = np.vstack([e[1] for e in experiences])
+        rewards = np.vstack([e[2] for e in experiences])
+        next_states = np.vstack([e[3] for e in experiences])
+        dones = np.vstack([e[4] for e in experiences]).astype(np.uint8)
         return states, actions, rewards, next_states, dones
     
     def __len__(self):
         return len(self.buffer)
 
 
-class Agent(nn.Module):
+class NeuralNetwork:
+    """Simple 3-layer neural network with ReLU activations (NumPy implementation)"""
+    def __init__(self, input_size, hidden_size, output_size, learning_rate=0.0005):
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        self.learning_rate = learning_rate
+        
+        # Initialize weights with small random values
+        self.W1 = np.random.randn(input_size, hidden_size) * 0.01
+        self.b1 = np.zeros((1, hidden_size))
+        self.W2 = np.random.randn(hidden_size, hidden_size) * 0.01
+        self.b2 = np.zeros((1, hidden_size))
+        self.W3 = np.random.randn(hidden_size, output_size) * 0.01
+        self.b3 = np.zeros((1, output_size))
+        
+        # Cache for backpropagation
+        self.cache = {}
+    
+    def forward(self, X):
+        """Forward pass through network"""
+        # Layer 1
+        Z1 = np.dot(X, self.W1) + self.b1
+        A1 = np.maximum(0, Z1)  # ReLU activation
+        
+        # Layer 2
+        Z2 = np.dot(A1, self.W2) + self.b2
+        A2 = np.maximum(0, Z2)  # ReLU activation
+        
+        # Layer 3
+        Z3 = np.dot(A2, self.W3) + self.b3
+        
+        # Cache for backprop
+        self.cache = {'X': X, 'Z1': Z1, 'A1': A1, 'Z2': Z2, 'A2': A2, 'Z3': Z3}
+        
+        return Z3
+    
+    def backward(self, dZ3, batch_size):
+        """Backward pass through network with gradient descent update"""
+        # Extract cached values
+        X = self.cache['X']
+        Z1 = self.cache['Z1']
+        A1 = self.cache['A1']
+        Z2 = self.cache['Z2']
+        A2 = self.cache['A2']
+        
+        # Output layer gradients
+        dW3 = np.dot(A2.T, dZ3) / batch_size
+        db3 = np.sum(dZ3, axis=0, keepdims=True) / batch_size
+        
+        # Hidden layer 2 gradients
+        dA2 = np.dot(dZ3, self.W3.T)
+        dZ2 = dA2 * (Z2 > 0)  # ReLU derivative
+        dW2 = np.dot(A1.T, dZ2) / batch_size
+        db2 = np.sum(dZ2, axis=0, keepdims=True) / batch_size
+        
+        # Hidden layer 1 gradients
+        dA1 = np.dot(dZ2, self.W2.T)
+        dZ1 = dA1 * (Z1 > 0)  # ReLU derivative
+        dW1 = np.dot(X.T, dZ1) / batch_size
+        db1 = np.sum(dZ1, axis=0, keepdims=True) / batch_size
+        
+        # Gradient clipping for stability
+        dW1 = np.clip(dW1, -1, 1)
+        dW2 = np.clip(dW2, -1, 1)
+        dW3 = np.clip(dW3, -1, 1)
+        db1 = np.clip(db1, -1, 1)
+        db2 = np.clip(db2, -1, 1)
+        db3 = np.clip(db3, -1, 1)
+        
+        # Update weights with gradient descent
+        self.W1 -= self.learning_rate * dW1
+        self.b1 -= self.learning_rate * db1
+        self.W2 -= self.learning_rate * dW2
+        self.b2 -= self.learning_rate * db2
+        self.W3 -= self.learning_rate * dW3
+        self.b3 -= self.learning_rate * db3
+    
+    def copy_weights(self, other):
+        """Copy weights from another network"""
+        self.W1 = other.W1.copy()
+        self.b1 = other.b1.copy()
+        self.W2 = other.W2.copy()
+        self.b2 = other.b2.copy()
+        self.W3 = other.W3.copy()
+        self.b3 = other.b3.copy()
+
+
+class Agent:
+    """Q-Learning Agent with continuous action space"""
     def __init__(self, task, hidden_size=128, learning_rate=0.0005, gamma=0.99):
-        super(Agent, self).__init__()
         self.task = task
         self.state_size = task.state_size
         self.action_size = task.action_size
         self.action_low = task.action_low
         self.action_high = task.action_high
+        self.action_range = self.action_high - self.action_low
         self.gamma = gamma  # discount factor
+        self.learning_rate = learning_rate
         
-        # Q-Network (estimates Q-values for actions)
-        self.fc1 = nn.Linear(self.state_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, self.action_size)
+        # Q-Network (estimates Q-values for continuous actions)
+        self.network = NeuralNetwork(
+            input_size=self.state_size,
+            hidden_size=hidden_size,
+            output_size=self.action_size,
+            learning_rate=learning_rate
+        )
         
         # Target Q-Network (for stability)
-        self.target_fc1 = nn.Linear(self.state_size, hidden_size)
-        self.target_fc2 = nn.Linear(hidden_size, hidden_size)
-        self.target_fc3 = nn.Linear(hidden_size, self.action_size)
+        self.target_network = NeuralNetwork(
+            input_size=self.state_size,
+            hidden_size=hidden_size,
+            output_size=self.action_size,
+            learning_rate=learning_rate
+        )
         self._copy_weights()
-        
-        self.optimizer = optim.Adam(self.parameters(), lr=learning_rate)
-        self.loss_fn = nn.MSELoss()
         
         # Experience replay
         self.memory = ReplayBuffer(buffer_size=10000)
@@ -61,45 +150,42 @@ class Agent(nn.Module):
         self.train_interval = 4
         self.update_target_interval = 1000
         
+        # Exploration parameters
+        self.epsilon = 1.0  # Exploration rate
+        self.epsilon_min = 0.01
+        self.epsilon_decay = 0.995
+        
         self.best_score = -np.inf
+        self.noise_scale = 0.1  # For compatibility with notebook
         
         self.reset_episode()
     
     def _copy_weights(self):
         """Copy main network weights to target network"""
-        self.target_fc1.load_state_dict(self.fc1.state_dict())
-        self.target_fc2.load_state_dict(self.fc2.state_dict())
-        self.target_fc3.load_state_dict(self.fc3.state_dict())
-    
-    def forward(self, state):
-        """Forward pass through Q-network"""
-        x = torch.relu(self.fc1(state))
-        x = torch.relu(self.fc2(x))
-        q_values = self.fc3(x)
-        return q_values
-    
-    def _target_forward(self, state):
-        """Forward pass through target Q-network"""
-        x = torch.relu(self.target_fc1(state))
-        x = torch.relu(self.target_fc2(x))
-        q_values = self.target_fc3(x)
-        return q_values
+        self.target_network.copy_weights(self.network)
     
     def act(self, state):
-        """Select action using Q-network"""
-        state_tensor = torch.from_numpy(state).float().unsqueeze(0)
-        with torch.no_grad():
-            q_values = self.forward(state_tensor)
-        action = q_values.cpu().numpy()[0]
+        """Select action using continuous Q-learning policy"""
+        # Reshape state for network
+        state_input = state.reshape(1, -1)
         
-        # Epsilon-greedy exploration
-        if random.random() < 0.1:  # 10% separate noise/exploration chance
-             action += np.random.normal(0, 50, size=self.action_size)
-
-        # Clamp to valid rotor speeds
+        # Get Q-values from network (interpreted as action values)
+        q_values = self.network.forward(state_input)[0]
+        
+        # Scale Q-values to action range (0 to 900)
+        # Map from [-1, 1] range to [action_low, action_high]
+        action = np.tanh(q_values) * (self.action_range / 2) + (self.action_low + self.action_range / 2)
+        
+        # Epsilon-greedy exploration: add noise with probability epsilon
+        if random.random() < self.epsilon:
+            # Add Gaussian noise for exploration
+            action += np.random.normal(0, self.noise_scale * self.action_range, size=self.action_size)
+        
+        # Clip to valid rotor speeds
         action = np.clip(action, self.action_low, self.action_high)
-        # Ensure minimum rotor speed to avoid division by zero
+        # Ensure minimum rotor speed
         action = np.maximum(action, 0.01)
+        
         return action
     
     def reset_episode(self):
@@ -114,8 +200,9 @@ class Agent(nn.Module):
         self.total_reward += reward
         self.count += 1
         
-        # Store experience
-        self.memory.add(state, action, reward, next_state, done)
+        # Store experience (normalize reward for stability)
+        normalized_reward = reward / 100.0
+        self.memory.add(state, action, normalized_reward, next_state, float(done))
         
         # Train on batch if we have enough experiences
         if len(self.memory) > self.batch_size and self.train_counter % self.train_interval == 0:
@@ -134,25 +221,35 @@ class Agent(nn.Module):
         """Train Q-network on a batch of experiences"""
         states, actions, rewards, next_states, dones = self.memory.sample(self.batch_size)
         
-        # Current Q-values
-        q_values = self.forward(states)
+        # Forward pass through main network
+        q_values = self.network.forward(states)
         
-        # Target Q-values: Q_target = r + gamma * max(Q(s'))
-        with torch.no_grad():
-            next_q_values = self._target_forward(next_states)
-            # For continuous action space: take max over action dimensions
-            max_next_q = torch.amax(next_q_values, dim=1, keepdim=True)
-            target_q = rewards + self.gamma * max_next_q * (1 - dones)
+        # Forward pass through target network for next states
+        next_q_values = self.target_network.forward(next_states)
         
-        # Compute loss and backprop
-        loss = self.loss_fn(q_values, target_q)
-        self.optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
-        self.optimizer.step()
+        # For continuous action space: compute max Q-value for next states
+        # We use the output as our Q-values
+        max_next_q = np.max(next_q_values, axis=1, keepdims=True)
+        
+        # Compute target Q-values using temporal difference
+        target_q = rewards + self.gamma * max_next_q * (1 - dones)
+        
+        # Compute TD error (gradient of MSE loss)
+        batch_size = states.shape[0]
+        dZ3 = (q_values - target_q) * 2 / batch_size  # MSE derivative
+        
+        # Backward pass (update network weights)
+        self.network.backward(dZ3, batch_size)
     
     def learn(self):
-        """Called at end of episode"""
+        """Called at end of episode to update learning parameters"""
         self.score = self.total_reward / float(self.count) if self.count else 0.0
+        
+        # Track best score
         if self.score > self.best_score:
             self.best_score = self.score
+        
+        # Decay exploration rate
+        if self.epsilon > self.epsilon_min:
+            self.epsilon *= self.epsilon_decay
+            self.noise_scale = self.epsilon  # Update noise scale for logging
