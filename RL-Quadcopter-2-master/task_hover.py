@@ -1,72 +1,68 @@
 import numpy as np
 from physics_sim import PhysicsSim
 
+
 class TaskHover():
-    """Task (environment) that defines the goal and provides feedback to the agent."""
-    def __init__(self, init_pose=None, init_velocities=None, 
-        init_angle_velocities=None, runtime=5., target_pos=None):
-        """Initialize a Task object.
-        Params
-        ======
-            init_pose: initial position of the quadcopter in (x,y,z) dimensions and the Euler angles
-            init_velocities: initial velocity of the quadcopter in (x,y,z) dimensions
-            init_angle_velocities: initial radians/second for each of the three Euler angles
-            runtime: time limit for each episode
-            target_pos: target/goal (x,y,z) position for the agent
-        """
-        # Simulation
-        self.sim = PhysicsSim(init_pose, init_velocities, init_angle_velocities, runtime) 
+
+    def __init__(self, init_pose=None, init_velocities=None,
+                 init_angle_velocities=None, runtime=5., target_pos=None):
+        # Simulation — default start already at the hover target
+        if init_pose is None:
+            init_pose = np.array([0., 0., 10., 0., 0., 0.])
+        self.sim = PhysicsSim(init_pose, init_velocities,
+                              init_angle_velocities, runtime)
         self.action_repeat = 3
 
-        self.state_size = self.action_repeat * 6
+        # State: pose(6) + velocity(3) per action‑repeat
+        self.state_size = self.action_repeat * 9
         self.action_low = 0
         self.action_high = 900
         self.action_size = 4
 
-        # Goal
-        self.target_pos = target_pos if target_pos is not None else np.array([0., 0., 10.]) 
+        # Goal — hover at (0, 0, 10)
+        self.target_pos = (target_pos if target_pos is not None
+                           else np.array([0., 0., 10.]))
+
 
     def get_reward(self):
-        """Uses current pose of sim to return reward."""
-        # Reward for hovering:
-        # 1. Penalize distance from target position (x, y, z)
-        # 2. Penalize velocity (we want it to stay still)
-        # 3. Penalize extreme angles (we want it to stay flat)
-        
-        # Distance from target
-        dist_penalty = 0.3 * (abs(self.sim.pose[:3] - self.target_pos)).sum()
-        
-        # Velocity penalty (we want to hover, so velocity should be low)
-        # However, we might want to prioritize position first. 
-        # Let's keep it simple for now, similar to original but maybe tweaked.
-        
-        # A common reward for hover is closer to 1 if close to target, and falls off.
-        # Original: reward = 1.-.3*(abs(self.sim.pose[:3] - self.target_pos)).sum()
-        
-        # Let's try to improve stability by penalizing high velocities slightly?
-        # For now, I will stick to a position-based reward but ensure start/end matching makes sense.
-        # The user said "start in the air and to hover".
-        
-        reward = 1. - .3*(abs(self.sim.pose[:3] - self.target_pos)).sum()
-        
-        # Optional: Add bonus for staying alive (not crashing) implicitly handled by runtime if episode ends on crash?
-        # PhysicsSim ends if z < 0.
-        
+    
+        #  position error (Euclidean) 
+        pos_error = np.linalg.norm(self.sim.pose[:3] - self.target_pos)
+        # Gaussian‑style: 1 at target, decays with σ ≈ 3 m
+        pos_reward = np.exp(-0.1 * pos_error ** 2)
+
+        # z‑component gets extra weight (most important axis) 
+        z_error = abs(self.sim.pose[2] - self.target_pos[2])
+        z_reward = np.exp(-0.5 * z_error ** 2)
+
+        #  velocity penalty 
+        speed = np.linalg.norm(self.sim.v)
+        vel_penalty = 0.05 * speed  # keep small so it doesn't dominate
+
+        # orientation penalty (roll & pitch only) ---
+        angle_penalty = 0.05 * (abs(self.sim.pose[3]) + abs(self.sim.pose[4]))
+
+        # --- alive bonus ---
+        alive = 0.1
+
+        reward = pos_reward + z_reward - vel_penalty - angle_penalty + alive
         return reward
 
     def step(self, rotor_speeds):
         """Uses action to obtain next state, reward, done."""
         reward = 0
-        pose_all = []
+        state_all = []
         for _ in range(self.action_repeat):
-            done = self.sim.next_timestep(rotor_speeds) # update the sim pose and velocities
-            reward += self.get_reward() 
-            pose_all.append(self.sim.pose)
-        next_state = np.concatenate(pose_all)
+            done = self.sim.next_timestep(rotor_speeds)
+            reward += self.get_reward()
+            # Append pose + velocity to state
+            state_all.append(np.concatenate([self.sim.pose, self.sim.v]))
+        next_state = np.concatenate(state_all)
         return next_state, reward, done
 
     def reset(self):
         """Reset the sim to start a new episode."""
         self.sim.reset()
-        state = np.concatenate([self.sim.pose] * self.action_repeat) 
+        state_single = np.concatenate([self.sim.pose, self.sim.v])
+        state = np.concatenate([state_single] * self.action_repeat)
         return state
