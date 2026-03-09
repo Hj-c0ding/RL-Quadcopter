@@ -25,27 +25,19 @@ class TaskHover():
 
 
     def get_reward(self):
-    
-        #  position error (Euclidean) 
-        pos_error = np.linalg.norm(self.sim.pose[:3] - self.target_pos)
-        # Gaussian‑style: 1 at target, decays with σ ≈ 3 m
-        pos_reward = np.exp(-0.1 * pos_error ** 2)
-
-        # z‑component gets extra weight (most important axis) 
-        z_error = abs(self.sim.pose[2] - self.target_pos[2])
-        z_reward = np.exp(-0.5 * z_error ** 2)
-
-        #  velocity penalty 
-        speed = np.linalg.norm(self.sim.v)
-        vel_penalty = 0.05 * speed  # keep small so it doesn't dominate
-
-        # orientation penalty (roll & pitch only) ---
-        angle_penalty = 0.05 * (abs(self.sim.pose[3]) + abs(self.sim.pose[4]))
-
-        # --- alive bonus ---
-        alive = 0.1
-
-        reward = pos_reward + z_reward - vel_penalty - angle_penalty + alive
+        """Maximize: stay at target z=10 and keep vertical velocity near zero."""
+        z = self.sim.pose[2]
+        z_error = abs(z - self.target_pos[2])
+        vz = self.sim.v[2]
+        # Altitude: strong reward at target, steep decay (max 2.0)
+        z_reward = 2.0 * np.exp(-0.6 * z_error ** 2)
+        # Vertical speed: strong reward for small |vz| (max 1.0)
+        vz_reward = np.exp(-1.0 * vz ** 2)
+        # Bonus for tight hover at target
+        tight_bonus = 0.5 if z_error < 0.3 and abs(vz) < 0.2 else 0.0
+        # Penalty for being above target (discourage floating high)
+        above_penalty = 0.06 * max(0, z - self.target_pos[2])
+        reward = z_reward + vz_reward + tight_bonus - 0.04 * z_error - 0.03 * abs(vz) - above_penalty
         return reward
 
     def step(self, rotor_speeds):
