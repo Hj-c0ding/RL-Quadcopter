@@ -38,7 +38,7 @@ class TaskHover():
         
         above_penalty = 0.06 * max(0, self.sim.pose[2] - self.target_pos[2])
 
-        reward = z_reward + vz_reward + tight_bonus - 0.04 * z_error - 0.03 * abs(vz) - above_penalty
+        reward = z_reward + vz_reward + tight_bonus - 0.04 * z_error - 0.03 * abs(vz)
         return reward
 
     def step(self, rotor_speeds):

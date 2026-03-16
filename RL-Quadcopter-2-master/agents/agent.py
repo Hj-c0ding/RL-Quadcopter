@@ -76,9 +76,9 @@ class Agent:
     """DDPG Agent for continuous control. Uses residual policy: action = hover_thrust + delta."""
     
     # Rotor speed per motor for hover (slightly above physics equilibrium for margin)
-    HOVER_ROTOR_SPEED = 200
+    HOVER_ROTOR_SPEED = 404
     
-    def __init__(self, state_size, action_size, action_low=0, action_high=900, seed=42):
+    def __init__(self, state_size, action_size, action_low=0, action_high=900, seed=42, target_z=10.0):
         self.state_size = state_size
         self.action_size = action_size
         self.action_low = action_low
@@ -86,6 +86,8 @@ class Agent:
         self.hover_action = np.ones(4, dtype=np.float64) * self.HOVER_ROTOR_SPEED
         self.delta_scale = 10.0  # policy can add ±130 thrust for corrections
         self.vz_gain = 2.0  # P-term: add thrust when falling (action += -vz_gain * vz)
+        self.z_gain = 10.0  # P-term: add thrust to reduce z error
+        self.target_z = target_z
         self._hover_tensor = None  # set on first use in learn() to match device
         
         # Set random seed
@@ -150,6 +152,14 @@ class Agent:
             target_param.data.copy_(
                 self.tau * local_param.data + (1.0 - self.tau) * target_param.data
             )
+
+    def _state_layout(self, state_size):
+        """Infer state layout to pick z and vz indices."""
+        if state_size % 9 == 0:
+            return -7, -1  # pose(6)+v(3) per repeat
+        if state_size % 6 == 0:
+            return -4, None  # pose(6) per repeat
+        return 2 if state_size > 2 else -1, None
     
     def act(self, state, training=False):
         """
@@ -157,8 +167,8 @@ class Agent:
         P-term opposes vertical velocity (add thrust when falling).
         """
         state = np.asarray(state, dtype=np.float64)
-        # Most recent vz is last element of state (state = [pose,v] x action_repeat)
-        vz = state[-1]
+        z_index, vz_index = self._state_layout(state.size)
+        vz = state[vz_index] if vz_index is not None else 0.0
         state_t = torch.from_numpy(state).float().to(self.device)
         
         self.actor.eval()
@@ -169,10 +179,10 @@ class Agent:
         delta = residual * self.delta_scale
         action = self.hover_action + delta
 
-        deltaz = 10 - state[3]
+        deltaz = self.target_z - state[z_index]
         # Proportional correction: when falling (vz < 0), add thrust on all rotors
         action += np.ones(4, dtype=np.float64) * (self.vz_gain * (-vz))
-        action += np.ones(4, dtype=np.float64) * (10 * deltaz)
+        action += np.ones(4, dtype=np.float64) * (self.z_gain * deltaz)
 
         if training:
             noise = np.random.normal(0, self.epsilon * 25, size=self.action_size)
@@ -216,8 +226,20 @@ class Agent:
         # ============ Update Critic ============
         # Calculate target Q-values
         with torch.no_grad():
-            next_actions = self.actor_target(next_states)
-            target_q_values = self.critic_target(next_states, next_actions)
+            next_actions_residual = self.actor_target(next_states)
+            if self._hover_tensor is None:
+                self._hover_tensor = torch.from_numpy(self.hover_action).float().to(self.device)
+            z_index, vz_index = self._state_layout(next_states.shape[1])
+            next_z = next_states[:, z_index]
+            if vz_index is not None:
+                next_vz = next_states[:, vz_index]
+            else:
+                next_vz = torch.zeros_like(next_z)
+            p_correction = (self.vz_gain * (-next_vz) + self.z_gain * (self.target_z - next_z)).unsqueeze(1)
+            next_full_actions = next_actions_residual * self.delta_scale + self._hover_tensor + p_correction
+            next_actions_scaled = (next_full_actions / self.action_high) * 2.0 - 1.0
+            next_actions_scaled = torch.clamp(next_actions_scaled, -1.0, 1.0)
+            target_q_values = self.critic_target(next_states, next_actions_scaled)
             # Bellman target
             y = rewards + self.gamma * target_q_values * (1 - dones)
         
@@ -237,8 +259,15 @@ class Agent:
         # Actor outputs residual [-1,1]; convert to full action scale for critic
         if self._hover_tensor is None:
             self._hover_tensor = torch.from_numpy(self.hover_action).float().to(self.device)
+        z_index, vz_index = self._state_layout(states.shape[1])
+        z = states[:, z_index]
+        if vz_index is not None:
+            vz = states[:, vz_index]
+        else:
+            vz = torch.zeros_like(z)
+        p_correction = (self.vz_gain * (-vz) + self.z_gain * (self.target_z - z)).unsqueeze(1)
         predicted_residual = self.actor(states)
-        full_actions = predicted_residual * self.delta_scale + self._hover_tensor
+        full_actions = predicted_residual * self.delta_scale + self._hover_tensor + p_correction
         actions_scaled = (full_actions / self.action_high) * 2.0 - 1.0  # same scale as replay buffer
         actions_scaled = torch.clamp(actions_scaled, -1.0, 1.0)
         actor_loss = -self.critic(states, actions_scaled).mean()
