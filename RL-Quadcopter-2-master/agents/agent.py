@@ -75,9 +75,8 @@ class ReplayBuffer:
 class Agent:
     """DDPG Agent for continuous control. Uses residual policy: action = hover_thrust + delta."""
     
-    # Rotor speed per motor for hover at z=10 (physics equilibrium ~404; use 408 for slight margin)
-    HOVER_ROTOR_SPEED = 408
-    TARGET_Z = 10.0  # match task target so P-term can be altitude-aware
+    # Rotor speed per motor for hover (slightly above physics equilibrium for margin)
+    HOVER_ROTOR_SPEED = 200
     
     def __init__(self, state_size, action_size, action_low=0, action_high=900, seed=42):
         self.state_size = state_size
@@ -85,8 +84,8 @@ class Agent:
         self.action_low = action_low
         self.action_high = action_high
         self.hover_action = np.ones(4, dtype=np.float64) * self.HOVER_ROTOR_SPEED
-        self.delta_scale = 130.0  # policy can add ±130 thrust for corrections
-        self.vz_gain = 22.0  # P-term: oppose vz but reduce thrust when above target
+        self.delta_scale = 10.0  # policy can add ±130 thrust for corrections
+        self.vz_gain = 2.0  # P-term: add thrust when falling (action += -vz_gain * vz)
         self._hover_tensor = None  # set on first use in learn() to match device
         
         # Set random seed
@@ -154,12 +153,11 @@ class Agent:
     
     def act(self, state, training=False):
         """
-        Residual policy: action = hover_thrust + delta + P(z, vz).
-        P-term: below target add thrust when falling; above target reduce thrust to descend.
+        Residual policy: action = hover_thrust + delta + P(vz).
+        P-term opposes vertical velocity (add thrust when falling).
         """
         state = np.asarray(state, dtype=np.float64)
-        # State = [pose(6), v(3)] repeated 3x; most recent z = state[20], vz = state[26]
-        z = state[20]
+        # Most recent vz is last element of state (state = [pose,v] x action_repeat)
         vz = state[-1]
         state_t = torch.from_numpy(state).float().to(self.device)
         
@@ -170,13 +168,12 @@ class Agent:
         
         delta = residual * self.delta_scale
         action = self.hover_action + delta
-        # P-term: oppose vz. Below target (z < 10) add thrust when falling; above target reduce thrust to come down
-        if z <= self.TARGET_Z:
-            correction = self.vz_gain * (-vz)  # add thrust when falling
-        else:
-            correction = 0.6 * self.vz_gain * vz  # above target: reduce thrust when falling (vz<0 -> negative correction)
-        action += np.ones(4, dtype=np.float64) * correction
-        
+
+        deltaz = 10 - state[3]
+        # Proportional correction: when falling (vz < 0), add thrust on all rotors
+        action += np.ones(4, dtype=np.float64) * (self.vz_gain * (-vz))
+        action += np.ones(4, dtype=np.float64) * (10 * deltaz)
+
         if training:
             noise = np.random.normal(0, self.epsilon * 25, size=self.action_size)
             action = action + noise

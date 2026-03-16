@@ -25,18 +25,19 @@ class TaskHover():
 
 
     def get_reward(self):
-        """Maximize: stay at target z=10 and keep vertical velocity near zero."""
-        z = self.sim.pose[2]
-        z_error = abs(z - self.target_pos[2])
+        """Maximize: stay at target z and keep vertical velocity near zero."""
+        z_error = abs(self.sim.pose[2] - self.target_pos[2])
         vz = self.sim.v[2]
         # Altitude: strong reward at target, steep decay (max 2.0)
         z_reward = 2.0 * np.exp(-0.6 * z_error ** 2)
         # Vertical speed: strong reward for small |vz| (max 1.0)
         vz_reward = np.exp(-1.0 * vz ** 2)
-        # Bonus for tight hover at target
+        # Bonus for tight hover (extra reward when very close)
         tight_bonus = 0.5 if z_error < 0.3 and abs(vz) < 0.2 else 0.0
-        # Penalty for being above target (discourage floating high)
-        above_penalty = 0.06 * max(0, z - self.target_pos[2])
+        # Light linear penalties to encourage reducing 
+        
+        above_penalty = 0.06 * max(0, self.sim.pose[2] - self.target_pos[2])
+
         reward = z_reward + vz_reward + tight_bonus - 0.04 * z_error - 0.03 * abs(vz) - above_penalty
         return reward
 
