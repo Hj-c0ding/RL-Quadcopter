@@ -78,7 +78,7 @@ class Agent:
     # Rotor speed per motor for hover (slightly above physics equilibrium for margin)
     HOVER_ROTOR_SPEED = 404
     
-    def __init__(self, state_size, action_size, action_low=0, action_high=900, seed=42, target_z=10.0):
+    def __init__(self, state_size, action_size, action_low=0, action_high=900, seed=42, target_z=20.0):
         self.state_size = state_size
         self.action_size = action_size
         self.action_low = action_low
@@ -154,11 +154,14 @@ class Agent:
             )
 
     def _state_layout(self, state_size):
-        """Infer state layout to pick z and vz indices."""
+   
         if state_size % 9 == 0:
+
             return -7, -1  # pose(6)+v(3) per repeat
         if state_size % 6 == 0:
+
             return -4, None  # pose(6) per repeat
+        
         return 2 if state_size > 2 else -1, None
     
     def act(self, state, training=False):
@@ -167,8 +170,12 @@ class Agent:
         P-term opposes vertical velocity (add thrust when falling).
         """
         state = np.asarray(state, dtype=np.float64)
+
+
         z_index, vz_index = self._state_layout(state.size)
         vz = state[vz_index] if vz_index is not None else 0.0
+
+
         state_t = torch.from_numpy(state).float().to(self.device)
         
         self.actor.eval()
@@ -180,6 +187,8 @@ class Agent:
         action = self.hover_action + delta
 
         deltaz = self.target_z - state[z_index]
+
+
         # Proportional correction: when falling (vz < 0), add thrust on all rotors
         action += np.ones(4, dtype=np.float64) * (self.vz_gain * (-vz))
         action += np.ones(4, dtype=np.float64) * (self.z_gain * deltaz)

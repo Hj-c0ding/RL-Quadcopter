@@ -21,7 +21,7 @@ class TaskHover():
 
         # Goal — hover at (0, 0, 10)
         self.target_pos = (target_pos if target_pos is not None
-                           else np.array([0., 0., 10.]))
+                           else np.array([0., 0., 20.]))
 
 
     def get_reward(self):
